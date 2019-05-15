@@ -1,0 +1,6 @@
+name = Local Bulk Edit
+description = Bulk edit module.
+package = Local
+core = 7.x
+version = 7.x-1.x
+dependencies[] = views_bulk_operations

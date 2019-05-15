@@ -1,0 +1,1062 @@
+<?php
+/**
+ * @file
+ * Passes selected ids through $_SESSION['local_bulk_edit_arguments'] to the "Edit agreements" page.
+ */
+ 
+/**
+ * Implements hook_permision().
+ *
+ */
+function local_bulk_edit_permission() {
+  return array(
+    'Bulk edit SOSA' => array(
+      'title' => t('Allow use of Bulk Edit VBO.'),
+      'description' => t('Allow use of Bulk Edit VBO.'),
+    ),
+  );
+}
+
+/**
+ * Set up the bulk edit link.
+ * Implements hook_menu().
+ */
+function local_bulk_edit_menu() {
+  $items = array();
+
+  $items['edit-agreements'] = array( //this creates a URL that will call this form at "bulk-update"
+    'title callback' => 'local_bulk_edit_title', //page title
+    'description' => 'Edit agreements',
+    'page callback' => 'drupal_get_form', //this is the function that will be called when the page is accessed.  for a form, use drupal_get_form
+    'page arguments' => array('local_bulk_edit_form'), //put the name of the form here
+    'access callback' => TRUE
+  );
+
+  $items['modifier-les-accords'] = array( //this creates a URL that will call this form at "bulk-update"
+    'title callback' => 'local_bulk_edit_title', //page title
+    'description' => 'Modifier les accords',
+    'page callback' => 'drupal_get_form', //this is the function that will be called when the page is accessed.  for a form, use drupal_get_form
+    'page arguments' => array('local_bulk_edit_form'), //put the name of the form here
+    'access callback' => TRUE
+  );
+
+  return $items;
+}
+
+/**
+ * Callback to produce the edit agreements title.
+ * @see local_bulk_edit_menu().
+ */
+function local_bulk_edit_title() {
+  // get the procurement number from the first node id
+  if (isset($_SESSION['local_bulk_edit_arguments'])){
+    $node_ids = explode(",", $_SESSION['local_bulk_edit_arguments']);
+  }
+  $procurement_number='';
+  if(isset($node_ids) && !empty($node_ids[0])) {
+    $node = node_load($node_ids[0]);
+    if(is_object($node)) {
+      $agreement_number = $node->field_agreement_number['und'][0]['value'];
+      $procurement_number_components = explode('/',$agreement_number);
+      if(is_array($procurement_number_components)) {
+        $procurement_number = reset($procurement_number_components);
+      }
+    }
+  }
+  // return the title
+  return t('Edit agreements for procurement number @procurement_number', array('@procurement_number' => $procurement_number));
+}
+
+/**
+ * Implementation of hook_action_info().
+ */
+function local_bulk_edit_action_info() {
+  return array(
+    'local_bulk_edit_action' => array(
+      'label' => t('Pass ids through a session variable to the bulk edit page'),
+      'type' => 'entity',
+      'aggregate' => TRUE,
+      'configurable' => FALSE,
+      'hooks' => array(),
+      'triggers' => array('any'),
+    ),
+  );
+}
+  
+/**
+ * Set up the form to enter the URL
+ */
+function local_bulk_edit_action_views_bulk_operations_form($options) {
+  $form['url']['en'] = array(
+    '#title' => t('URL'),
+    '#type' => 'textfield',
+    '#description' => t('Enter the English URL that the user will be sent to. The IDs will be available through the session variable.'),
+    '#default_value' => isset($options['url']['en']) ? $options['url']['en'] : '',
+    '#field_prefix' => url(NULL, array('absolute' => TRUE)) . (variable_get('clean_url', 0) ? '' : '?q='),
+  );
+  $form['url']['fr'] = array(
+    '#title' => t('URL'),
+    '#type' => 'textfield',
+    '#description' => t('Enter the French URL that the user will be sent to. The IDs will be available through the session variable.'),
+    '#default_value' => isset($options['url']['fr']) ? $options['url']['fr'] : '',
+    '#field_prefix' => url(NULL, array('absolute' => TRUE)) . (variable_get('clean_url', 0) ? '' : '?q='),
+  );
+  return $form;
+}
+
+/**
+ * Implementation of a Drupal action.
+ * Passes selected ids through a session variable to the Bulk Edit page.
+ */
+function local_bulk_edit_action($entities, $context = array()) {
+  global $language;
+  $base_url = $context['settings']['url'][$language->language];
+  $arguments = implode(',', array_keys($entities));
+  // Add a trailing slash if missing.
+  if (substr($base_url, -1, 1) != '/') {
+    $base_url .= '/';
+  }
+  $_SESSION['local_bulk_edit_arguments'] = $arguments;
+  drupal_goto($base_url);
+}
+
+/**
+ * Helper function. Used with local_bulk_edit_form().
+ *
+ * Determines whether or not the $field_name for $langcode is the same across all $nodes.
+ * If the values are all the same, the common value will be returned.
+ * Otherwise, a message will be returned to indicate that the values are not all the same.
+ */
+function local_bulk_edit_compare_field_values($nodes, $field_name, $langcode) {
+  $initial_node = TRUE;
+  $field_value = NULL;
+  $field_instance = field_info_instance('node', $field_name, 'sosa');
+  $display = $field_instance['display']['default'];
+
+  foreach($nodes as $node) {
+    $field_values = [];
+
+    // get the field data
+    $field_items = field_get_items('node', $node, $field_name, $langcode);
+
+    // render each item and store it in an array to be converted to a string later
+    $field_item_count = count($field_items);
+    for($i = 0; $i < $field_item_count; $i++) {
+      if(is_array($field_items[$i])) {
+        $render_array = field_view_value('node', $node, $field_name, $field_items[$i], $display, $langcode);
+        $field_values[] = drupal_render($render_array);
+      }
+    }
+
+    // convert the array of field data to a comma-separated string
+    $node_field_value = implode(', ', $field_values);
+
+    if($initial_node === TRUE) {
+      // this is the first node, set the value
+      $field_value = $node_field_value;
+      $initial_node = FALSE;
+    }
+    else if($node_field_value !== $field_value) {
+      // the values differ, return a message
+      $field_label = (isset($field_instance['label']))? strtolower(t($field_instance['label'])) : '';
+      return t('The information entered in the "@field_name" field is not the same for all selected agreements and reference information cannot be provided.', array('@field_name' => $field_label));
+    }
+  }
+  // return the common value
+  if($field_value == '') {
+    $field_value = t('None');
+  }
+  return t('Current value: !field_value', array('!field_value' => $field_value));
+}
+
+/**
+ * Helper function. Used with local_bulk_edit_form().
+ *
+ * Adds a form field to the main form. The fields are based on their sosa node counterparts, with modifications:
+ * - They are optional
+ * - "Current value" message is added to the description
+ */
+function local_bulk_edit_form_field($nodes, $field_name, $langcode, &$form, &$form_state, $includeCurrentValue = TRUE) {
+  $languages = language_list();
+  
+  // get field information
+  $field = field_info_field($field_name);
+  $field_instance = field_info_instance('node', $field_name, 'sosa');
+
+  // get the "current value" message
+  $field_value = ($includeCurrentValue) ? local_bulk_edit_compare_field_values($nodes, $field_name, $langcode) : '';
+
+  // initialize the field's form
+  $field_form = array(
+      '#parents' => isset($form['#parents'])? $form['#parents'] : array(),
+  );
+
+  // alter some field defaults
+  $field_instance['required'] = FALSE;
+  $field_instance['description'] = (empty($field_instance['description']))? '<p>'.$field_value.'</p>' : '<p>'.t($field_instance['description']).'</p><p>'.$field_value.'</p>';
+
+  // reload values if any
+  $default_values = (isset($form_state['storage']['update'][$field_name][$langcode]))? $form_state['storage']['update'][$field_name][$langcode] : array();
+
+  // build the field's form
+  $form_field = field_default_form('node', FALSE, $field, $field_instance, $langcode, $default_values, $field_form, $form_state);
+
+  if($langcode != 'und') {
+    // add the language to the field's label
+    _entity_translation_element_title_append($form_field[$field_name][$langcode], ' (' . t($languages[$langcode]->name) . ')');
+
+    // add CSS class to identify translated fields - from entity_translation_unified_form
+    $form_field[$field_name]['#attributes']['class'][] = 'etuf-translated-field';
+  }
+
+  // add the field's form the the main form
+  if(!isset($form[$field_name])) {
+    $form[$field_name] = $form_field[$field_name];
+  }
+  else {
+    $form[$field_name][$langcode] = $form_field[$field_name][$langcode];
+  }
+}
+
+function local_bulk_edit_reduce_select_options($nodes, &$form, &$form_state) {
+  // reduce mandatory commodity field options to common options
+  $commodity_group = '';
+  foreach($nodes as $node) {
+    if (empty($node->field_commodity_group[LANGUAGE_NONE])){
+      $commodity_group = '';
+      break;
+    }
+    $node_commodity_group = $node->field_commodity_group[LANGUAGE_NONE][0]['value'];
+    if($commodity_group == '') {
+      $commodity_group = $node_commodity_group;
+    }
+    else if($commodity_group != $node_commodity_group) {
+      $commodity_group = '';
+      break;
+    }
+  }
+  $mandatory_commodity_options = _local_taxonomy_values('mandatory_commodity','tids',array(),array($commodity_group,'NonMndtry'));
+  
+  // add "No change" option
+  $mandatory_commodity_options = array('_none' => t('No change')) + $mandatory_commodity_options;
+  $form['field_mandatory_commodity']['und']['#options'] = $mandatory_commodity_options;
+  if (!isset($form_state['storage']['update']['field_mandatory_commodity'])){
+    $form['field_mandatory_commodity']['und']['#default_value'] = '_none';
+  }
+  
+  // reduce province field options to common options
+  // uncomment for AUT support - @see local_bulk_edit_form
+  /*$common_options = NULL;
+  foreach($nodes as $node) {
+    $node_form_state['build_info']['args'][0] = $node;
+    $region_tids = _local_node_get_region_tids($node_form_state);
+  
+    if($common_options === NULL) {
+      $common_options = $region_tids;
+    }
+    else {
+      $common_options = array_intersect($common_options, $region_tids);
+    }
+  
+    if(count($common_options) == 0) {
+      break;
+    }
+  }
+  $element = &$form['field_authorized_prov_terr_user_group']['field_authorized_prov_terr_user']['und'];
+  if (!empty($element['#options'])) {
+    foreach ($element['#options'] AS $key => $label) {
+      if (!in_array($key,$common_options) && $key != '_none') {
+        unset($element['#options'][$key]);
+  
+      } else {
+        $element['#options'][$key] = substr($label,0,1) == '-' ? substr($label,1) : $label;
+      }
+    }
+  }*/
+}
+
+/**
+ * Adds a comment field to the bulk edit form
+ */
+function local_bulk_edit_add_comment_field(&$form, &$form_state) {
+  global $user;
+  $by = (!empty($user->field_displayname[LANGUAGE_NONE][0]['value'])) ? $user->field_displayname[LANGUAGE_NONE][0]['value'] : $user->name;
+
+  $default_value = (isset($form_state['storage']['page_one_values']['log']))? $form_state['storage']['page_one_values']['log'] : t('Edited by !by.', array('!by' => $by));
+  $form['log'] = array(
+      '#type' => 'textarea',
+      '#title' => t('Comment'),
+      '#rows' => 4,
+      '#default_value' => $default_value,
+      '#description' => t('This text will not appear on the published version.'),
+      '#weight' => 99,
+  );
+}
+
+/**
+ * Adds a socio economic benefits fieldset disguised as one field to the bulk edit form
+ */
+function local_bulk_edit_add_socio_economic_benefits_fieldset(&$form, &$form_state) {
+  //Option value constants
+  $NO_CHANGES = 0;
+  $APPLY = 1;
+  $REMOVE = 2;
+  //add the socio economic benefits fieldset
+  $form['fieldset_socio_economic_benefits'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Socio-economic benefits'),
+    '#attributes' => array(
+        'class' => array('page-bulk-edit-disguised-field')
+    ),
+    '#collapsible' => FALSE,
+    '#weight' => 13
+  );
+  //add all of the socio economic benefits fields
+  foreach(local_bulk_edit_get_editable_SEB() as $tid)
+  {
+    $form['fieldset_socio_economic_benefits']['field_socio_economic_benefits_'.$tid] = array(
+      '#type' => 'radios',
+      '#title' => t(taxonomy_term_load($tid)->name).' :',
+      '#default_value' => $NO_CHANGES,
+      '#options' => array(
+        $NO_CHANGES => t('No change'),
+        $APPLY => t('Apply'),
+        $REMOVE => t('Remove')
+      )
+    );
+  }
+}
+
+/**
+ * Load the latest node revisions for a list of node ids.
+ */
+function local_bulk_edit_load_latest_revisions($node_ids) {
+  $result = db_query('SELECT nid, MAX(vid) FROM {node_revision} WHERE nid IN (:nids) GROUP BY vid', array(':nids' => $node_ids));
+
+  $nodes = [];
+  if(!empty($result)) {
+    $vids = $result->fetchAllKeyed();
+
+    foreach($vids as $nid => $vid) {
+      $nodes[] = node_load($nid, $vid);
+    }
+  }
+
+  return $nodes;
+}
+
+/**
+ * Set up the bulk edit form.
+ * Implements hook_form().
+ */
+
+function local_bulk_edit_form($form, &$form_state) {
+  global $language;
+
+  $breadcrumb = array();
+  $breadcrumb[] = l(t('Home'), '<front>');
+  $breadcrumb[] = l(t('My workspace'), '/my-workspace');
+  $breadcrumb[] = local_bulk_edit_title();
+  drupal_set_breadcrumb($breadcrumb);
+
+  // Display summary page if $form_state['storage']['summary_page'] is set
+  if (isset($form_state['storage']['summary_page'])) {
+    return local_bulk_edit_summary($form, $form_state);
+  }
+
+  // add the introduction text
+  $nid = variable_get('local_bulk_edit_introduction_nid');
+  if (!empty($nid)) {
+    $intro_node = node_load($nid);
+
+    if (!empty($intro_node->field_description[$language->language][0]['safe_value'])) {
+      $form['local_bulk_edit-intro'] = array(
+        '#markup' => '<p>' . $intro_node->field_description[$language->language][0]['safe_value'] . '</p>',
+        '#weight' => -999,
+      );
+    }
+  }
+
+  // load the VBO-selected nodes
+  $node_ids = explode(",", $_SESSION['local_bulk_edit_arguments']);
+  $nodes = local_bulk_edit_load_latest_revisions($node_ids);
+  $procurement_number = $nodes[0]->field_procurement_number['und'][0]['value'];
+
+  // set form defaults
+  $node = new stdClass();
+  $node->type = 'sosa';
+  node_object_prepare($node);
+  $form['#node'] = $node; // required for _local_node_field_authorized_prov_terr_user_form_alter
+  $form['#entity_type'] = 'node'; // required for field group
+  $form['#bundle'] = 'sosa'; // required for field group
+
+  //////////////////////////////////////////
+  // Build form fields, based on SOSA fields 
+  $field_name = 'field_limited_description';
+  $langcode = 'en';
+  local_bulk_edit_form_field($nodes, $field_name, $langcode, $form, $form_state);
+
+  $field_name = 'field_limited_description';
+  $langcode = 'fr';
+  local_bulk_edit_form_field($nodes, $field_name, $langcode, $form, $form_state);
+
+  $field_name = 'field_min_call_up';
+  $langcode = 'und';
+  local_bulk_edit_form_field($nodes, $field_name, $langcode, $form, $form_state);
+
+  $field_name = 'field_min_call_up_unlimited';
+  $langcode = 'und';
+  local_bulk_edit_form_field($nodes, $field_name, $langcode, $form, $form_state, FALSE);
+
+  $field_name = 'field_mandatory_commodity';
+  $langcode = 'und';
+  local_bulk_edit_form_field($nodes, $field_name, $langcode, $form, $form_state);
+
+  // this field wasn't supposed to be part of this sprint, but it is functional.
+  // uncomment this to restore the AUT field: https://project.deen-gc.ca/issues/25371#note-22
+  // also uncomment the "apply special cases" and "Reopopulate the fake field" sections below
+  // also uncomment the "reduce province field options to common options" section above
+  //$field_name = 'field_authorized_prov_terr_user';
+  //$langcode = 'und';
+  //local_bulk_edit_form_field($nodes, $field_name, $langcode, $form, $form_state);
+
+  $field_name = 'field_notes';
+  $langcode = 'en';
+  local_bulk_edit_form_field($nodes, $field_name, $langcode, $form, $form_state);
+
+  $field_name = 'field_notes';
+  $langcode = 'fr';
+  local_bulk_edit_form_field($nodes, $field_name, $langcode, $form, $form_state);
+
+  $field_name = 'field_contact_email';
+  $langcode = 'und';
+  local_bulk_edit_form_field($nodes, $field_name, $langcode, $form, $form_state);
+
+  $field_name = 'field_ola';
+  $langcode = 'und';
+  local_bulk_edit_form_field($nodes, $field_name, $langcode, $form, $form_state, FALSE);
+
+  local_bulk_edit_add_comment_field($form, $form_state);
+  local_bulk_edit_add_socio_economic_benefits_fieldset($form, $form_state);
+
+  //////////////////////////////////////
+  // apply special cases from local_node
+  _local_node_field_min_call_up_form_alter($form, $form_state);
+  //_local_node_field_authorized_prov_terr_user_form_alter($form, $form_state);
+
+  ///////////////////////////////////////////
+  // apply special cases from local_bulk_edit
+  local_bulk_edit_reduce_select_options($nodes, $form, $form_state);
+
+  // The description doesn't populate well in local_bulk_edit_form_field, 
+  // this moves the correct description to the rendered variable
+  $form['field_min_call_up_group']['field_min_call_up']['und'][0]['value']['#description'] = $form['field_min_call_up_group']['field_min_call_up']['und']['#description'];
+  $form['field_contact_email']['und'][0]['email']['#description'] = $form['field_contact_email']['und']['#description'];
+
+  // Reopopulate the fake field (Authorized provincial/territorial user: None)
+  //$aptu_storage = (isset($form_state['storage']['page_one_values']))? $form_state['storage']['page_one_values']['field_authorized_prov_terr_user_none'] : FALSE;
+  //$form['field_authorized_prov_terr_user_group']['field_authorized_prov_terr_user_none']['#default_value'] = $aptu_storage;
+
+  // apply field groups
+  field_group_field_attach_form('node', $node, $form, $form_state, 'und');
+
+  /////////////////////////
+  // add additional fields
+  $form['nids'] = array(
+    '#type' => 'hidden',
+    '#value' => $_SESSION['local_bulk_edit_arguments']
+  );
+
+  $form['procurement_number'] = array(
+    '#type' => 'hidden',
+    '#value' => $procurement_number
+  );
+
+  $form['save_submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Save'),
+    '#weight' => 100,
+    '#submit' => array('local_bulk_edit_local_bulk_edit_form_submit'),
+  );
+
+  $form['cancel'] = array(
+    '#markup' => l(t('Cancel'), '/my-workspace', array('attributes' => array('class' => array('btn','btn-default')))),
+    '#weight' => 101,
+  );
+  
+  $form['date_modified'] = array(
+    '#type' => 'markup',
+    '#markup' => local_bulk_edit_date_modified(),
+    '#weight' => 200,
+  );
+
+  $form['#validate'][] = 'local_bulk_edit_form_validate';
+
+  return $form;
+}
+
+function local_bulk_edit_form_validate(&$form, &$form_state) {
+  if(!isset($form['#node'])) {
+    return;
+  }
+  // Email
+  field_attach_form_validate('node', $form['#node'], $form, $form_state, array('field_name' => 'field_contact_email'));
+  
+  // Minimum call-up value
+  $field_min_call_up_value = $form_state['values']['field_min_call_up'][LANGUAGE_NONE][0]['value'];
+  $field_min_call_up_unlimited_value = (boolean) $form_state['values']['field_min_call_up_unlimited'][LANGUAGE_NONE][0]['value'];
+  if (strlen($field_min_call_up_value) == 0 && !$field_min_call_up_unlimited_value) {
+    // The field is empty
+  }
+  elseif (!strlen($field_min_call_up_value) == 0 && $field_min_call_up_unlimited_value) {
+    form_set_error('field_min_call_up', t('You must deselect "None" to enter an amount into the Minimum value field.'));
+    form_set_error('field_min_call_up_unlimited');
+  }
+  elseif (!$field_min_call_up_unlimited_value && !_is_valid_call_up_value($field_min_call_up_value)) {
+    form_set_error('field_min_call_up', t('The Minimum call-up value !value is not a valid value. Please use this format: 100000.00.', array('!value' => $field_min_call_up_value)));
+  }
+
+  /*// Authorized provincial/territorial user
+  $field_authorized_prov_terr_user_values = $form_state['values']['field_authorized_prov_terr_user'][LANGUAGE_NONE];
+  $field_authorized_prov_terr_user_none =  $form_state['values']['field_authorized_prov_terr_user_none'];
+  if (sizeof($field_authorized_prov_terr_user_values) > 0 && !empty($field_authorized_prov_terr_user_values[0]['tid']) && $field_authorized_prov_terr_user_none) {
+    form_set_error('field_authorized_prov_terr_user', t('You must deselect "None" to enter a selection into the @main_field_label field.',
+        array('@main_field_label' => $form['field_authorized_prov_terr_user_group']['field_authorized_prov_terr_user'][LANGUAGE_NONE]['#title'])));
+    form_set_error('field_authorized_prov_terr_user_none');
+  }*/
+
+  // Socio-economic benefits
+  //get all Socio-economic benefits fields and ignore all the one with 'No change' selected
+  $user_input_socio_economic_benefits_fields =
+  array_filter($form_state['values'], function($key) use($form_state){
+    if($form_state['values'][$key] == 0) {
+      unset($form_state['values'][$key]);
+      return false;
+    }
+    return strpos($key, 'field_socio_economic_benefits_') !== false;
+  }, ARRAY_FILTER_USE_KEY);
+  //format an array for future operation
+  $socio_economic_benefits_fields_apply_tids = array();
+  $socio_economic_benefits_fields_remove_tids = array();
+  foreach($user_input_socio_economic_benefits_fields as $field_key => $field_value) {
+    switch($field_value) {
+      case 1:
+        array_push($socio_economic_benefits_fields_apply_tids, str_replace('field_socio_economic_benefits_', '', $field_key));
+        break;
+      case 2:
+        array_push($socio_economic_benefits_fields_remove_tids, str_replace('field_socio_economic_benefits_', '', $field_key));
+        break;
+    }
+    unset($form_state['values'][$field_key]);
+  }
+  $form_state['values']['field_socio_economic_benefits'] = array(
+    'apply' => $socio_economic_benefits_fields_apply_tids,
+    'remove' => $socio_economic_benefits_fields_remove_tids
+  );
+}
+
+/**
+ * Custom callback function.
+ * Summary page.
+ */
+function local_bulk_edit_summary(&$form, &$form_state) {
+  global $language;
+
+  $dl_pre = '<dl class="dl-horizontal brdr-0">';
+  $dl_post = '</dl>';
+  $dt_pre = '<dt style="width: 330px;">';
+  $dt_post = '</dt>';
+  $dd_pre = '<dd style="margin-left: 330px;">';
+  $dd_post = '</dd>';
+  $changed = 0;
+  $markup = $build_dl = '';
+  if ($language->language == 'en') {
+    $lang = 'en';
+    $alt_lang = 'fr';
+  } else {
+    $lang = 'fr';
+    $alt_lang = 'en';
+  }
+
+  $values = $form_state['storage']['page_one_values'];
+  $form_state['storage']['update'] = array();
+  unset($form_state['storage']['changed']);
+
+  if(isset($values['field_limited_description'])) {
+    $key = 'field_limited_description';
+    $value = $values[$key];
+    if (!empty($value[$lang][0]['value'])) {
+      $build_dl .= $dt_pre . $form_state['storage']['page_one_titles'][$key][$lang]['title'] . $dt_post;
+      $build_dl .= $dd_pre . $value[$lang][0]['value'] . $dd_post;
+      $form_state['storage']['changed'] = 1;
+      $form_state['storage']['update'][$key][$lang] = $value[$lang];
+    }
+    if (!empty($value[$alt_lang][0]['value'])) {
+      $build_dl .= $dt_pre . $form_state['storage']['page_one_titles'][$key][$alt_lang]['title'] . $dt_post;
+      $build_dl .= $dd_pre . $value[$alt_lang][0]['value'] . $dd_post;
+      $form_state['storage']['changed'] = 1;
+      $form_state['storage']['update'][$key][$alt_lang] = $value[$alt_lang];
+    }
+  }
+
+  if ((isset($values['field_min_call_up']))||(isset($values['field_min_call_up_unlimited']))) {
+    $key = 'field_min_call_up';
+    $value = $values[$key];
+    if ((!empty($value['und'][0]['value']))||(!empty($values['field_min_call_up_unlimited']['und'][0]['value']))) {
+      if ($key == 'field_min_call_up') {
+        $build_dl .= $dt_pre . $form_state['storage']['page_one_titles'][$key]['und']['title'] . $dt_post;
+        if ($value['und'][0]['value'] != '') {
+          $build_dl .= $dd_pre . $value['und'][0]['value'] . $dd_post;
+          $form_state['storage']['update'][$key] = $value;
+          $form_state['storage']['update']['field_min_call_up_unlimited'] = array();
+        } elseif ($form_state['storage']['page_one_values']['field_min_call_up_unlimited']['und'][0]['value']) {
+          $build_dl .= $dd_pre . t('None') . $dd_post;
+          $form_state['storage']['update'][$key] = array();
+          $form_state['storage']['update']['field_min_call_up_unlimited'] = $form_state['storage']['page_one_values']['field_min_call_up_unlimited'];
+        }
+      }
+      $form_state['storage']['changed'] = 1;
+    }
+  }
+
+  if(isset($values['field_mandatory_commodity'])) {
+    $key = 'field_mandatory_commodity';
+    $value = $values[$key];
+    if (!empty($value['und'][0]['tid'])) {
+      $build_dl .= $dt_pre . $form_state['storage']['page_one_titles'][$key]['und']['title'] . $dt_post;
+      $build_dl .= $dd_pre . $form_state['storage']['page_one_options'][$key]['und']['options'][$value['und'][0]['tid']] . $dd_post;
+      $form_state['storage']['changed'] = 1;
+      $form_state['storage']['update'][$key] = $value;
+    }
+  }
+
+  if(isset($values['field_socio_economic_benefits'])) {
+    $key = 'field_socio_economic_benefits';
+    $value = $values[$key];
+    if (!empty($values[$key]['apply']) || !empty($values[$key]['remove'])) {
+      $build_dl .= $dt_pre . $form_state['storage']['page_one_titles'][$key]['title'] . $dt_post;
+      $build_dl .= $dd_pre;
+      if(!empty($value['apply'])) {
+        $build_dl .= t('Apply') . ($lang == 'fr' ? ' ' : '') . ': <br/><ul>';
+        foreach($value['apply'] as $tid) {
+          $build_dl .= '<li>' . taxonomy_term_load($tid)->name . '</li>';
+        }
+        $build_dl .= '</ul>';
+      }
+      if(!empty($value['remove'])) {
+        $build_dl .= t('Remove') . ($lang == 'fr' ? ' ' : '') . ': <br/><ul>';
+        foreach($value['remove'] as $tid) {
+          $build_dl .= '<li>' . taxonomy_term_load($tid)->name . '</li>';
+        }
+        $build_dl .= '</ul>';
+      }
+      $build_dl .= $dd_post;
+      $form_state['storage']['changed'] = 1;
+      $form_state['storage']['update'][$key] = $value;
+    }
+  }
+
+  /*if(isset($values['field_authorized_prov_terr_user']) && isset($values['field_authorized_prov_terr_user_none'])) {
+    $key = 'field_authorized_prov_terr_user';
+    $value = $values[$key];
+    if ((!empty($value['und'][0]['tid']))||(!empty($form_state['storage']['page_one_values']['field_authorized_prov_terr_user_none']))) {
+      if ($key == 'field_authorized_prov_terr_user') {
+        $build_dl .= $dt_pre . $form_state['storage']['page_one_titles'][$key]['und']['title'] . $dt_post;
+        if (!empty($value['und'][0]['tid'])) {
+          $form_state['storage']['update'][$key] = $value;
+          $build_dl .= $dd_pre . '<ul>';
+          foreach ($value['und'] as $tids) {
+            $build_dl .= '<li>' . $form_state['storage']['page_one_options'][$key]['und']['options'][$tids['tid']] . '</li>';
+          }
+          $build_dl .= '</ul>' . $dd_post;
+          $form_state['storage']['update'][$key] = $value;
+        } elseif ($form_state['storage']['page_one_values']['field_authorized_prov_terr_user_none']) {
+          $form_state['storage']['update'][$key] = array();
+          $build_dl .= $dd_pre . t('None') . $dd_post;
+        }
+      }
+      $form_state['storage']['changed'] = 1;
+    }
+  }*/
+
+  if(isset($values['field_contact_email'])) {
+    $key = 'field_contact_email';
+    $value = $values[$key];
+    if (!empty($value['und'][0]['email'])) {
+      $build_dl .= $dt_pre . $form_state['storage']['page_one_titles'][$key]['und']['title'] . $dt_post;
+      $build_dl .= $dd_pre . $value['und'][0]['email'] . $dd_post;
+      $form_state['storage']['changed'] = 1;
+      $form_state['storage']['update'][$key] = $value;
+    }
+  }
+
+  if(isset($values['field_notes'])) {
+    $key = 'field_notes';
+    $value = $values[$key];
+    if (!empty($value[$lang][0]['value'])) {
+      $build_dl .= $dt_pre . $form_state['storage']['page_one_titles'][$key][$lang]['title'] . $dt_post;
+      $build_dl .= $dd_pre . $value[$lang][0]['value'] . $dd_post;
+      $form_state['storage']['changed'] = 1;
+      $form_state['storage']['update'][$key][$lang] = $value[$lang];
+    }
+    if (!empty($value[$alt_lang][0]['value'])) {
+      $build_dl .= $dt_pre . $form_state['storage']['page_one_titles'][$key][$alt_lang]['title'] . $dt_post;
+      $build_dl .= $dd_pre . $value[$alt_lang][0]['value'] . $dd_post;
+      $form_state['storage']['changed'] = 1;
+      $form_state['storage']['update'][$key][$alt_lang] = $value[$alt_lang];
+    }
+  }
+
+  if(isset($values['field_ola'])) {
+    $key = 'field_ola';
+    $value = $values[$key];
+    if (!empty($value['und'][0]['value'])) {
+      $attested = ($value['und'][0]['value'] ? $form_state['storage']['page_one_titles'][$key]['und']['title-checkbox'] : '');
+      $build_dl .= $dt_pre . $form_state['storage']['page_one_titles'][$key]['und']['title'] . $dt_post;
+      $build_dl .= $dd_pre . $attested . $dd_post;
+      $form_state['storage']['changed'] = 1;
+      $form_state['storage']['update'][$key] = $value;
+    }
+  }
+
+  if (isset($form_state['storage']['changed'])) {
+    $markup = '<p>' . t('You are about to modify the information listed below for all agreements that were selected under procurement number @procurement_number:',
+      array('@procurement_number' => $form_state['storage']['page_one_values']['procurement_number'])) . '</p>';
+    $markup .= $dl_pre . $build_dl . $dl_post;
+    $markup .= '<p>' . t('Are you sure you want to apply the changes to these agreements?') . '</p>';
+  } else {
+    $markup = '<p>' . t('No information was edited.') . '</p>';
+  }
+
+  $form['raw_markup'] = array(
+    '#type' => 'markup',
+    '#markup' => $markup,
+  );
+
+  $form['summary_submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Yes'),
+    '#weight' => 100,
+    '#submit' => array('local_bulk_edit_local_bulk_edit_form_submit'),
+    '#attributes' => array('class' => array('btn-success')),
+  );
+
+  $form['summary_cancel'] = array(
+    '#type' => 'submit',
+    '#value' => t('Cancel'),
+    '#weight' => 101,
+    '#submit' => array('local_bulk_edit_local_bulk_edit_form_submit'),
+    //'#attributes' => array('class' => array('btn','btn-link')),
+  );
+
+  $form['date_modified'] = array(
+    '#type' => 'markup',
+    '#markup' => local_bulk_edit_date_modified(),
+    '#weight' => 200,
+  );
+
+  return $form;
+}
+
+/**
+ * Validation functions
+ */
+
+function local_bulk_edit_local_bulk_edit_form_submit(&$form, &$form_state){
+  if ($form_state['clicked_button']['#id'] == 'edit-save-submit') {
+    $form_state['storage']['summary_page'] = TRUE;
+    $form_state['storage']['page_one_values'] = $form_state['values'];
+
+    $form_state['storage']['page_one_titles']['field_limited_description']['en']['title']           = $form['field_limited_description']['en'][0]['value']['#title'];
+    $form_state['storage']['page_one_titles']['field_limited_description']['fr']['title']           = $form['field_limited_description']['fr'][0]['value']['#title'];
+    $form_state['storage']['page_one_titles']['field_mandatory_commodity']['und']['title']          = $form['field_mandatory_commodity']['und']['#title'];
+    $form_state['storage']['page_one_options']['field_mandatory_commodity']['und']['options']       = $form['field_mandatory_commodity']['und']['#options'];
+    $form_state['storage']['page_one_titles']['field_notes']['en']['title']                         = $form['field_notes']['en'][0]['value']['#title'];
+    $form_state['storage']['page_one_titles']['field_notes']['fr']['title']                         = $form['field_notes']['fr'][0]['value']['#title'];
+    $form_state['storage']['page_one_titles']['field_contact_email']['und']['title']                = $form['field_contact_email']['und'][0]['#title'];
+    $form_state['storage']['page_one_titles']['field_ola']['und']['title']                          = t($form['#groups']['group_ola']->label);
+    $form_state['storage']['page_one_titles']['field_ola']['und']['title-checkbox']                 = $form['field_ola']['und']['#title'];
+    $form_state['storage']['page_one_titles']['field_min_call_up']['und']['title']                  = $form['field_min_call_up_group']['field_min_call_up']['und'][0]['#title'];
+    //$form_state['storage']['page_one_titles']['field_authorized_prov_terr_user']['und']['title']    = $form['field_authorized_prov_terr_user_group']['field_authorized_prov_terr_user']['und']['#title'];
+    //$form_state['storage']['page_one_options']['field_authorized_prov_terr_user']['und']['options'] = $form['field_authorized_prov_terr_user_group']['field_authorized_prov_terr_user']['und']['#options'];
+    $form_state['storage']['page_one_titles']['field_socio_economic_benefits']['title']             = $form['fieldset_socio_economic_benefits']['#title'];
+    $form_state["rebuild"] = TRUE;
+  }
+  else if($form_state['clicked_button']['#id'] == 'edit-summary-cancel') {
+    unset($form_state['storage']['summary_page']);
+    $form_state["rebuild"] = TRUE;
+  } 
+  else {
+    $node_ids = explode(",", $form_state['storage']['page_one_values']['nids']);
+    $updates = array();
+    foreach ($form_state['storage']['update'] as $key => $value) {
+      if (strpos($key, 'field_') !== false) {
+        $updates[$key] = $value;
+      }
+    }
+    $updates['revision'] = 1;
+    $updates['log'] = (isset($form_state['storage']['page_one_values']['log']) ? $form_state['storage']['page_one_values']['log'] . "\n" . t('Action was performed using the Edit agreements feature.') : t('Action was performed using the Edit agreements feature.'));
+    $updates['status'] = NODE_NOT_PUBLISHED;
+    $updates['workbench_moderation_state_new'] = 'draft';
+    $updates['procurement_number'] = $form_state['storage']['page_one_values']['procurement_number'];
+    module_load_include('inc', 'node', 'node.admin');
+    local_bulk_edit_node_mass_update($node_ids, $updates);
+    $form_state['redirect'] = '/my-workspace';
+  }
+}
+
+/**
+ * Implements hook_views_bulk_operations_form_alter().
+ *
+ * Removes the "Edit agreements" button if not pub or pa
+ * Adds validation callback for the first step of the VBO form.
+ */
+function local_bulk_edit_views_bulk_operations_form_alter(&$form, &$form_state, $form_id){
+  if($form['#form_id'] == 'views_form_wetkit_og_all_user_group_content_wetkit_og_my_workspace'
+    && 'views_form_views_form' === $form_state['step']) {
+    $groups = og_get_groups_by_user();
+    $is_pa_or_pub = FALSE;
+    if (is_array($groups) && array_key_exists('node', $groups) && is_array($groups['node'])) {
+      foreach ($groups['node'] as $gid) {
+        $roles = og_get_user_roles('node', $gid);
+        if (in_array('Publisher', $roles) || in_array('Publishing administrator', $roles)) {
+          $is_pa_or_pub = TRUE;
+          break;
+        }
+      }
+    }
+    if (!$is_pa_or_pub) {
+      unset($form['select']['action::local_bulk_edit_action']);
+    }
+  }
+  if(isset($form['select']['action::local_bulk_edit_action'])) {
+    // Validation callback for the first step of the VBO form.
+    $form['select']['action::local_bulk_edit_action']['#validate'][0] = 'local_bulk_edit_views_bulk_operations_form_validate';
+  }
+}
+
+function local_bulk_edit_views_bulk_operations_form_validate($form, &$form_state) {
+  $vbo = _views_bulk_operations_get_field($form_state['build_info']['args'][0]);
+
+  if (!empty($form_state['triggering_element']['#operation_id'])) {
+    $form_state['values']['operation'] = $form_state['triggering_element']['#operation_id'];
+  }
+  if (!$form_state['values']['operation']) {
+    form_set_error('operation', t('No operation selected. Please select an operation to perform.'));
+  }
+
+  $field_name = $vbo->options['id'];
+  $selection = _views_bulk_operations_get_selection($vbo, $form_state);
+  if (!$selection) {
+    form_set_error($field_name, t('Please select at least one item.'));
+  } else {
+    reset($selection);
+    $key = current($selection);
+    $selected_nodes = node_load_multiple($selection, FALSE);
+    $procurement_number = $selected_nodes[$key]->field_procurement_number['und'][0]['value'];
+    foreach ($selected_nodes as $nid => $node_info) {
+      $message = $selected_nodes[$nid]->field_procurement_number['und'][0]['value'] . " != " . $procurement_number;
+      if (($selected_nodes[$nid]->field_procurement_number['und'][0]['value'] != $procurement_number)||($selected_nodes[$nid]->type != 'sosa')) {
+        form_set_error($field_name, t('You cannot edit multiple agreements unless all of the agreements have the same procurement number.'));
+      } elseif ($selected_nodes[$nid]->workbench_moderation['current']->state == 'expired') {
+        form_set_error($field_name, t('You cannot perform this action for expired agreements. Please make sure that your selection does not contain any expired agreements.'));
+      } 
+    }
+  }
+}
+
+/**
+ * This is a copy of the function from 'modules/node/node.admin.inc'
+ *
+ * Make mass update of nodes, changing all nodes in the $nodes array
+ * to update them with the field values in $updates.
+ *
+ * IMPORTANT NOTE: This function is intended to work when called from a form
+ * submission handler. Calling it outside of the form submission process may not
+ * work correctly.
+ *
+ * @param array $nodes
+ *   Array of node nids to update.
+ * @param array $updates
+ *   Array of key/value pairs with node field names and the value to update that
+ *   field to.
+ */
+
+function local_bulk_edit_node_mass_update($nodes, $updates) {
+  // We use batch processing to prevent timeout when updating a large number
+  // of nodes.
+  $node_count = count($nodes);
+  $procurement_number = $updates['procurement_number'];
+  $message = 'You have successfully edited @node_count agreements for: @procurement_number';
+  $replace_array = array(
+    '@node_count' => $node_count,
+    '@procurement_number' => $procurement_number,
+  );
+
+  // used in the finish function
+  $_SESSION['local_bulk_edit_current_procurement_number'] = $procurement_number;
+
+  if (count($nodes) > 5) { //Reduced from 10 for this instance.
+    $batch = array(
+      'procurement_number' => $procurement_number,
+      'operations' => array(
+        array('local_bulk_edit_node_mass_update_batch_process', array($nodes, $updates))
+      ),
+      'finished' => 'local_bulk_edit_node_mass_update_batch_finished',
+      'title' => t('Processing'),
+      // We use a single multi-pass operation, so the default
+      // 'Remaining x of y operations' message will be confusing here.
+      'progress_message' => '', //'@remaining, @total, @current, @percentage, @elapsed, @estimate',
+      'error_message' => t('The update has encountered an error.'),
+      // The operations do live in the .module file, so we don't need to
+      // tell the batch engine which file to load before calling them.
+      //'file' => drupal_get_path('module', 'node') . '/node.admin.inc',
+    );
+    batch_set($batch);
+  }
+  else {
+    foreach ($nodes as $nid) {
+      local_bulk_edit_node_mass_update_helper($nid, $updates);
+    }
+    drupal_set_message(t($message, $replace_array));
+  }
+}
+
+function local_bulk_edit_node_mass_update_helper($nid, $updates) {
+  // load the latest node revision to use as a baseline for the new node
+  $nodes = local_bulk_edit_load_latest_revisions(array($nid));
+  if(count($nodes) != 1) {
+    return;
+  }
+  $node = $nodes[0];//node_load($nid, NULL, TRUE);
+
+  // For efficiency manually save the original node before applying any changes.
+  $node->original = clone $node;
+
+  // copy each update
+  foreach ($updates as $name => $field_values) {
+    switch($name) {
+      case 'field_socio_economic_benefits':
+        $not_applicable_tid = _local_taxonomy_get_tid_from_code('socio_economic_benefits', 'RSE-SEB-01');
+        $key_not_applicable = array_search(array('tid' => $not_applicable_tid), $node->{$name}[LANGUAGE_NONE]);
+        if($key_not_applicable !== FALSE) {
+          unset($node->{$name}[LANGUAGE_NONE][$key_not_applicable]);
+        }
+        foreach($field_values['remove'] as $tid) {
+          $key = array_search(array('tid' => $tid), $node->{$name}[LANGUAGE_NONE]);
+          if($key !== FALSE) {
+            unset($node->{$name}[LANGUAGE_NONE][$key]);
+          }
+        }
+        foreach($field_values['apply'] as $tid) {
+          if(!in_array(array('tid' => $tid), $node->{$name}[LANGUAGE_NONE])) {
+            array_push($node->{$name}[LANGUAGE_NONE], array('tid' => $tid));
+          }
+        }
+        if(count($node->{$name}[LANGUAGE_NONE]) == 0) {
+          array_push($node->{$name}[LANGUAGE_NONE], array('tid' => $not_applicable_tid));
+        }
+        break;
+      default:
+        // if the field is translatable, copy the language-value only
+        $field = field_info_field($name);
+        if(!empty($field) && field_is_translatable('node', $field)) {
+          foreach ($field_values as $lang => $value) {
+            $node->{$name}[$lang][0]['value'] = $value[0]['value'];
+          }
+        }
+        else {
+          $node->{$name} = $field_values;
+        }
+    }
+  }
+
+  // save the node
+  node_save($node);
+  return $node;
+}
+
+function local_bulk_edit_node_mass_update_batch_process($nodes, $updates, &$context) {
+  if (!isset($context['sandbox']['progress'])) {
+    $context['sandbox']['progress'] = 0;
+    $context['sandbox']['max'] = count($nodes);
+    $context['sandbox']['nodes'] = $nodes;
+  }
+
+  // Process nodes by groups of 5.
+  $count = min(5, count($context['sandbox']['nodes']));
+  for ($i = 1; $i <= $count; $i++) {
+
+    // For each nid, load the node, reset the values, and save it.
+    $nid = array_shift($context['sandbox']['nodes']);
+    $node = local_bulk_edit_node_mass_update_helper($nid, $updates);
+
+    // Store result for post-processing in the finished callback.
+    $context['results'][] = l($node->title, 'node/' . $node->nid);
+
+    // Update our progress information.
+    $context['sandbox']['progress']++;
+  }
+
+  // Inform the batch engine that we are not finished,
+  // and provide an estimation of the completion level we reached.
+  $context['finished'] = $context['sandbox']['progress'] / $context['sandbox']['max'];
+  $context['message'] = t('Processed @current out of @total', array(
+      '@current' => $context['sandbox']['progress'],
+      '@total' => $context['sandbox']['max'],
+  ));
+}
+
+/**
+ * This is a copy of the function from 'modules/node/node.admin.inc'
+ *
+ * Implements callback_batch_finished().
+ *
+ * Reports the status of batch operation for node_mass_update().
+ *
+ * @param bool $success
+ *   A boolean indicating whether the batch mass update operation successfully
+ *   concluded.
+ * @param int $results
+ *   The number of nodes updated via the batch mode process.
+ * @param array $operations
+ *   An array of function calls (not used in this function).
+ */
+function local_bulk_edit_node_mass_update_batch_finished($success, $results, $operations) {
+  if ($success) {
+    drupal_set_message(t('You have successfully edited @node_count agreements for: @procurement_number',
+        array(
+          '@node_count' => count($results),
+          '@procurement_number' => $_SESSION['local_bulk_edit_current_procurement_number'],
+        ))
+    );
+    unset($_SESSION['local_bulk_edit_current_procurement_number']);
+  }
+  else {
+    drupal_set_message(t('An error occurred and processing did not complete.'), 'error');
+    $message = format_plural(count($results), '1 item successfully processed:', '@count items successfully processed:');
+    $message .= theme('item_list', array('items' => $results));
+    drupal_set_message($message);
+  }
+}
+
+/**
+ * Return the date modified block.
+ */
+function local_bulk_edit_date_modified() {
+  $return = '<div class="panel-pane pane-date-modified">
+    <div class="pane-content">
+      <div class="datemod">
+        <dl id="wb-dtmd">
+          <dt>' . t('Date modified:') . ' </dt>
+          <dd><time property="dateModified">' . date("Y-m-d") . '</time></dd>
+        </dl>
+      </div>
+    </div>
+  </div>';
+  return $return;
+}
+
+function local_bulk_edit_get_editable_SEB() {
+  return db_select('field_data_field_code','c')->fields('c', array('entity_id'))->condition('field_code_value', variable_get('editable_socio_economic_benefits_fields_codes'), 'IN')->execute()->fetchCol();
+}

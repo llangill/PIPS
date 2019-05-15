@@ -1,0 +1,136 @@
+<?php
+/*
+ * Implements hook_install().
+ *
+ **/
+
+function local_bulk_edit_install() {
+  $local_bulk_edit_perm = array('Bulk edit SOSA');
+
+  $perms = module_invoke_all('permission');
+  // We can find the 'administer maintenance page' in $perms.
+
+  $role = user_role_load_by_name('administrator');
+  user_role_grant_permissions($role->rid, $local_bulk_edit_perm, 'local_bulk_edit');
+  
+  // Create the "Edit agreements" introduction
+  $node = entity_create('node', array('language' => 'en','type' => 'introduction'));
+  $node->status = 1;
+  $node->title = 'Edit agreements';
+  $node->title_field['en'][0]['value'] = 'Edit agreements';
+  $node->title_field['fr'][0]['value'] = 'Modifier les accords';
+  $node->og_group_ref[LANGUAGE_NONE][0]['target_id'] = 7183;
+  
+  $entity_handler = entity_translation_get_handler('node', $node, TRUE);
+  $translation = array(
+      'translate' => 0,
+      'status' => 1,
+      'language' => 'fr',
+      'source' => 'en',
+  );
+  $entity_handler->setTranslation($translation, $node);
+  node_save($node);
+  variable_set('local_bulk_edit_introduction_nid', $node->nid);
+
+  // Set up the alias for the French URL.
+  $path = array('source' => "edit-agreements", 'alias' => 'modifier-les-accords');
+  path_save($path);
+
+  // Add translations
+  $report = array(
+    'skips'=>0,
+    'updates'=>0,
+    'deletes'=>0,
+    'additions'=>0
+  );
+  $textgroup = 'default'; //'Built-in interface'; //
+  $langcode = 'fr';
+  $mode = LOCALE_IMPORT_OVERWRITE;
+  $context = '';
+
+  /** /mon-espace-travail */
+  $location = "/mon-espace-travail";
+  $source = "Edit agreements";
+  $translation = "Modifier les accords";
+  _locale_import_one_string_db($report, $langcode, $context, $source, $translation, $textgroup, $location, $mode);
+
+  $source = "You cannot edit multiple agreements unless all of the agreements have the same procurement number.";
+  $translation = "Vous ne pouvez pas modifier plusieurs accords, sauf s'ils ont tous le même numéro d'approvisionnement.";
+  _locale_import_one_string_db($report, $langcode, $context, $source, $translation, $textgroup, $location, $mode);
+
+  $source = "The update has been performed by Local Bulk Edit.";
+  $translation = "La commande a été exécutée au moyen de la fonction Modifier les accords.";
+  _locale_import_one_string_db($report, $langcode, $context, $source, $translation, $textgroup, $location, $mode);
+
+  $source = "You cannot perform this action for expired agreements. Please make sure that your selection does not contain any expired agreements.";
+  $translation = "Vous ne pouvez pas exécuter cette commande pour des accords expirés. Veuillez vous assurer que votre sélection ne comprend aucun accord expiré.";
+  _locale_import_one_string_db($report, $langcode, $context, $source, $translation, $textgroup, $location, $mode);
+
+  $source = "No information was edited.";
+  $translation = "Aucun renseignement n'a été modifié.";
+  _locale_import_one_string_db($report, $langcode, $context, $source, $translation, $textgroup, $location, $mode);
+
+  /** /edit-agreements */
+  $location = "/edit-agreements/'";
+
+  $source = "Edit agreements for procurement number @procurement_number";
+  $translation = "Modifier les accord en matière de numéro d'approvisionnement @procurement_number";
+  _locale_import_one_string_db($report, $langcode, $context, $source, $translation, $textgroup, $location, $mode);
+
+  $source = 'The information entered in the "@field_name" field is not the same for all selected agreements and reference information cannot be provided.';
+  $translation = 'Les renseignements saisis dans le champ « @field_name » ne sont pas les mêmes pour tous les accords sélectionnés et aucuns renseignements de référence ne peuvent être fournis.';
+  _locale_import_one_string_db($report, $langcode, $context, $source, $translation, $textgroup, $location, $mode);
+
+  $source = "Current value: !field_value";
+  $translation = "Valeur actuelle : !field_value";
+  _locale_import_one_string_db($report, $langcode, $context, $source, $translation, $textgroup, $location, $mode);
+
+  $source = "No change";
+  $translation = "Aucune modification";
+  _locale_import_one_string_db($report, $langcode, $context, $source, $translation, $textgroup, $location, $mode);
+
+  $source = "Save";
+  $translation = "Sauvegarder";
+  _locale_import_one_string_db($report, $langcode, $context, $source, $translation, $textgroup, $location, $mode);
+
+  $source = "Cancel";
+  $translation = "Annuler";
+  _locale_import_one_string_db($report, $langcode, $context, $source, $translation, $textgroup, $location, $mode);
+
+  $source = "None";
+  $translation = "Aucun(e)";
+  _locale_import_one_string_db($report, $langcode, $context, $source, $translation, $textgroup, $location, $mode);
+
+  $source = "You are about to modify the information listed below for all agreements that were selected under procurement number @procurement_number:";
+  $translation = "Vous êtes sur le point de modifier les renseignements indiqués ci-après pour tous les accords sélectionnés dans le cadre du @procurement_number :";
+  _locale_import_one_string_db($report, $langcode, $context, $source, $translation, $textgroup, $location, $mode);
+
+  $source = "Are you sure you want to apply the changes to these agreements?";
+  $translation = "Êtes-vous certain de vouloir appliquer les modifications aux accords?";
+  _locale_import_one_string_db($report, $langcode, $context, $source, $translation, $textgroup, $location, $mode);
+
+  $source = "Action was performed using the Edit agreements feature.";
+  $translation = "La commande a été exécutée au moyen de la fonction Modifier les accords.";
+  _locale_import_one_string_db($report, $langcode, $context, $source, $translation, $textgroup, $location, $mode);
+
+  // Update existing email field translation - this is also used in the edit agreements page
+  $location = "/application-d-offres-a-commandes-et-d-arrangements-en-matiere-d-approvisionnement/node/914/edit";
+  $source = "Please use a valid email format: contact@example.com";
+  $translation = "Veuillez utiliser une adresse courriel valide : contact@example.com";
+  _locale_import_one_string_db($report, $langcode, $context, $source, $translation, $textgroup, $location, $mode);
+
+  $location = "/batch?id=2958&op=finished";
+  $source = "You have successfully edited @node_count agreements for: @procurement_number";
+  $translation = "Vous avez modifié avec succès @node_count accords pour : @procurement_number";
+  _locale_import_one_string_db($report, $langcode, $context, $source, $translation, $textgroup, $location, $mode);
+}
+
+/**
+ * Update to set the URL translation
+ * Task #25934 - Language switch: Incorrect URL path when switching languages
+ */
+function local_bulk_edit_update_7000()
+{
+  $path = array('source' => "edit-agreements", 'alias' => 'modifier-les-accords');
+  path_save($path);
+}
